@@ -4,9 +4,6 @@ from psycopg2 import extras
 from datetime import datetime
 import pandas as pd
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Sistema de Folgas - Gilmar Santos", layout="centered")
-
 # --- CONEXÃO COM O BANCO ---
 def conectar():
     params = {
@@ -15,7 +12,8 @@ def conectar():
         "password": "UzYpFalRAFMirRh130wkP66Z8eJ3OUwb",
         "host": "://render.com",
         "port": "5432",
-        "sslmode": "require"
+        "sslmode": "require",
+        "connect_timeout": 15
     }
     try:
         conn = psycopg2.connect(**params)
@@ -24,26 +22,7 @@ def conectar():
     except:
         return None
 
-# --- LÓGICA DE NEGÓCIO ---
-def contar_por_data(data):
-    conn = conectar()
-    if not conn: return 0
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM folgas WHERE data = %s", (data,))
-    count = cur.fetchone()[0]
-    conn.close()
-    return count
-
-def salvar_folga(nome, data):
-    conn = conectar()
-    if not conn: return False
-    cur = conn.cursor()
-    cur.execute("INSERT INTO folgas (nome, data) VALUES (%s, %s)", (nome, data))
-    conn.commit()
-    conn.close()
-    return True
-
-# --- INTERFACE USUÁRIO ---
+# --- INTERFACE ---
 st.title("📅 Registro de Folgas")
 st.subheader("Desenvolvido por Gilmar Santos")
 
@@ -57,33 +36,40 @@ with st.form("form_folga", clear_on_submit=True):
     if submit:
         if " " not in nome:
             st.error("Por favor, digite seu NOME COMPLETO.")
-        elif contar_por_data(data_str) >= 2:
-            st.error(f"A data {data_str} já possui o limite de 2 funcionários.")
         else:
-            if salvar_folga(nome, data_str):
-                st.success(f"Folga registrada com sucesso para {nome}!")
+            conn = conectar()
+            if conn:
+                cur = conn.cursor()
+                # Verifica limite de 2 por data
+                cur.execute("SELECT COUNT(*) FROM folgas WHERE data = %s", (data_str,))
+                if cur.fetchone()[0] >= 2:
+                    st.error(f"A data {data_str} já possui o limite de 2 funcionários.")
+                else:
+                    cur.execute("INSERT INTO folgas (nome, data) VALUES (%s, %s)", (nome, data_str))
+                    conn.commit()
+                    st.success(f"Folga registrada para {nome}!")
+                conn.close()
             else:
-                st.error("Erro ao conectar com o banco. Tente novamente.")
+                st.error("Banco de dados fora do ar. Tente novamente em 30 segundos.")
 
-# --- ÁREA ADMINISTRATIVA ---
+# --- ADMIN ---
 st.markdown("---")
 with st.expander("🔓 Painel Administrativo"):
     senha = st.text_input("Senha Admin", type="password")
     if senha == "admin123":
         conn = conectar()
-        cur = conn.cursor(cursor_factory=extras.RealDictCursor)
-        cur.execute("SELECT id, nome, data FROM folgas ORDER BY id DESC")
-        df = pd.DataFrame(cur.fetchall())
-        conn.close()
+        if conn:
+            cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cur.execute("SELECT nome, data FROM folgas ORDER BY id DESC")
+            df = pd.DataFrame(cur.fetchall())
+            conn.close()
 
-        if not df.empty:
-            st.write("### Lista de Folgas")
-            st.dataframe(df[['nome', 'data']], use_container_width=True)
-            
-            # Exportar CSV
-            csv = df[['nome', 'data']].to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 Baixar CSV para Excel", csv, "folgas.csv", "text/csv")
-        else:
-            st.info("Nenhuma folga cadastrada.")
+            if not df.empty:
+                # Ajuste solicitado pelo Streamlit: width='stretch'
+                st.dataframe(df[['nome', 'data']], width='stretch')
+                csv = df[['nome', 'data']].to_csv(index=False).encode('utf-8-sig')
+                st.download_button("📥 Baixar CSV", csv, "folgas.csv", "text/csv")
+            else:
+                st.info("Nenhuma folga cadastrada.")
 
 st.caption(f"© {datetime.now().year} Gilmar Santos | Todos os direitos reservados")
